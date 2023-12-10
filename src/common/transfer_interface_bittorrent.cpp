@@ -64,6 +64,8 @@ namespace dunedaq::snbmodules
     {
         bool m_done = false;
         int finished_torrents = 0;
+        int m_torrent_num = get_transfer_options().get_transfers_meta().size();
+
         // lt::torrent_handle h;
 
         FILE *log_file = std::fopen(get_work_dir().append("bittorrent.log").c_str(), "w+");
@@ -100,7 +102,6 @@ namespace dunedaq::snbmodules
                 if (auto at = lt::alert_cast<lt::add_torrent_alert>(a))
                 {
                     // h = at->handle;
-                    m_torrent_num++;
                     TLOG() << "debug : Added torrent " << at->torrent_name();
                 }
 
@@ -141,7 +142,7 @@ namespace dunedaq::snbmodules
                     m_filename_to_metadata[p->torrent_name()]->set_status(status_type::e_status::FINISHED);
                     m_filename_to_metadata[p->torrent_name()]->set_bytes_transferred(m_filename_to_metadata[p->torrent_name()]->get_size());
 
-                    if (finished_torrents == m_torrent_num && m_is_client)
+                    if (finished_torrents >= m_torrent_num && m_is_client)
                     {
                         m_done = true;
                     }
@@ -151,7 +152,7 @@ namespace dunedaq::snbmodules
                     ers::error(BittorrentError(ERS_HERE, p->error.message()));
 
                     finished_torrents++;
-                    if (finished_torrents == m_torrent_num && m_is_client)
+                    if (finished_torrents >= m_torrent_num && m_is_client)
                     {
                         m_done = true;
                     }
@@ -184,12 +185,15 @@ namespace dunedaq::snbmodules
                 if (lt::alert_cast<lt::peer_connect_alert>(a))
                 {
                     m_peer_num++;
+                    // Updating torrent num to take into account the number of peers
+                    m_torrent_num = m_torrent_num * m_peer_num;
                     m_done = false;
                 }
 
                 if (auto e = lt::alert_cast<lt::peer_error_alert>(a))
                 {
                     m_peer_num--;
+                    m_torrent_num = m_torrent_num * m_peer_num;
                     // std::this_thread::sleep_for(std::chrono::seconds(1));
                     // Try to reconnect
                     // lt::error_code ec;
@@ -197,7 +201,11 @@ namespace dunedaq::snbmodules
                     ers::warning(BittorrentPeerDisconnectedError(ERS_HERE, e->message()));
                     // f_meta.set_error_code("peer error: " + a->message());
 
-                    if (m_peer_num == 0 && m_paused == 0 && !m_is_client)
+                    if (m_peer_num <= 0 && m_paused == 0 && !m_is_client)
+                    {
+                        m_done = true;
+                    }
+                    if (finished_torrents >= m_torrent_num && m_is_client)
                     {
                         m_done = true;
                     }
@@ -206,6 +214,7 @@ namespace dunedaq::snbmodules
                 if (auto e = lt::alert_cast<lt::peer_disconnected_alert>(a))
                 {
                     m_peer_num--;
+                    m_torrent_num = m_torrent_num * m_peer_num;
                     // wait
                     // std::this_thread::sleep_for(std::chrono::seconds(1));
                     // Try to reconnect
@@ -213,6 +222,10 @@ namespace dunedaq::snbmodules
                     // h.connect_peer(lt::tcp::endpoint(boost::asio::ip::make_address(config->get_source_ip().get_ip(), ec), std::uint16_t(config->get_source_ip().get_port())));
                     ers::warning(BittorrentPeerDisconnectedError(ERS_HERE, e->message()));
                     if (m_peer_num <= 0 && m_paused == 0 && !m_is_client)
+                    {
+                        m_done = true;
+                    }
+                    if (finished_torrents >= m_torrent_num && m_is_client)
                     {
                         m_done = true;
                     }
